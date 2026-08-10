@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use crate::must::must_create_dir;
 
 pub mod git;
+pub mod logging;
 pub mod must;
 
 #[derive(Parser)]
@@ -37,7 +38,7 @@ fn main() {
     let code_dir = must_create_dir(cli.code_dir);
     match cli.command {
         GWTCommand::Clone { project, repo } => {
-            git::clone_repo(code_dir.into(), &cli.host, &project, &repo);
+            git::clone_repo(code_dir, &cli.host, &project, &repo);
         }
     }
 }

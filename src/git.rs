@@ -1,11 +1,8 @@
-use std::{
-    path::PathBuf,
-    process::{self, Command},
-};
+use std::{path::PathBuf, process::Command};
 
 use git2::Repository;
 
-use crate::must::must_open_bare_repo;
+use crate::logging::{LogFatalOption, LogFatalResult, log_fatal};
 
 pub fn clone_repo(code_dir: PathBuf, host: &str, project: &str, repo: &str) -> Repository {
     let repo_url = format!("https://{}/{}/{}", host, project, repo);
@@ -14,37 +11,25 @@ pub fn clone_repo(code_dir: PathBuf, host: &str, project: &str, repo: &str) -> R
         println!("Repo {repo_url} already cloned at {repo_path:?}");
     } else {
         println!("Cloning {}", repo_url);
-        match Command::new("git")
+        let clone_exit_code = Command::new("git")
             .args([
                 "clone",
                 "--bare",
                 &repo_url,
-                repo_path.to_str().expect("UTF8 path"),
+                repo_path
+                    .to_str()
+                    .fatal(&format!("Repo path {repo_path:?} was not UTF8")),
             ])
             .status()
-        {
-            Ok(exit_status) => match exit_status.code() {
-                Some(exit_code) => match exit_code {
-                    0 => println!(
-                        "Successfully cloned {} into {}",
-                        repo_url,
-                        repo_path.display()
-                    ),
-                    _ => {
-                        eprintln!("Error cloning. Got exit code: {}", exit_code);
-                        process::exit(1);
-                    }
-                },
-                None => {
-                    eprintln!("Error cloning. Termintated by signal");
-                    process::exit(1);
-                }
-            },
-            Err(clone_err) => {
-                eprintln!("Error cloning. {}", clone_err);
-                process::exit(1)
-            }
-        };
+            .fatal("cloning repo")
+            .code()
+            .fatal("cloning was terminated");
+        if clone_exit_code == 0 {
+            println!("Successfully cloned {repo_url} into {repo_path:?}");
+        } else {
+            log_fatal(&format!("cloning. Got exit code: {clone_exit_code}"));
+        }
     }
-    must_open_bare_repo(repo_path)
+    Repository::open_bare(repo_path)
+        .fatal_err(|err| format!("opening bare repo: {}", err.message()))
 }
