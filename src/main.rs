@@ -1,8 +1,9 @@
-use std::{fs::create_dir_all, path::Path};
-
 use clap::{Parser, Subcommand};
 
+use crate::must::must_create_dir;
+
 pub mod git;
+pub mod must;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -33,22 +34,10 @@ enum GWTCommand {
 
 fn main() {
     let cli = CLI::parse();
-    println!("Hello from git-worktree-helper");
-    let code_dir = Path::new(&cli.code_dir);
-    println!("Code_dir: {:?}", code_dir);
-    if !code_dir.exists() {
-        match create_dir_all(code_dir) {
-            Ok(()) => println!("Created code_dir"),
-            Err(create_dir_error) => {
-                eprintln!("Error creating directory: {:?} Got message: {}", code_dir, create_dir_error)
-            }
-        }
-    }
-    println!("Host: {}", cli.host);
+    let code_dir = must_create_dir(cli.code_dir);
     match cli.command {
         GWTCommand::Clone { project, repo } => {
-            println!("Project/Repo: {}/{}", project, repo);
-            git::clone_repo(&cli.code_dir, &cli.host, &project, &repo);
+            git::clone_repo(code_dir.into(), &cli.host, &project, &repo);
         }
     }
 }
