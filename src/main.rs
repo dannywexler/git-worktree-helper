@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use crate::{
     cli::{CLI, GWTCloneCommand, GWTCommand},
-    git::{clone_branch, clone_repo},
+    git::{handle_clone_branch, handle_clone_repo},
     logging::StringResult,
     safe_fs::must_create_dir,
 };
@@ -19,13 +19,13 @@ fn run_cli() -> StringResult {
     match cli.command {
         GWTCommand::Clone { clone_target } => match clone_target {
             GWTCloneCommand::Repo { project, repo } => {
-                clone_repo(code_dir, &cli.host, &project, &repo)
+                handle_clone_repo(code_dir, &cli.host, &project, &repo)
             }
             GWTCloneCommand::Branch {
                 project,
                 repo,
                 branch,
-            } => clone_branch(code_dir, &cli.host, project, repo, branch),
+            } => handle_clone_branch(code_dir, &cli.host, project, repo, branch),
         },
     }
 }

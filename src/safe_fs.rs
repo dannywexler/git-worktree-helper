@@ -8,11 +8,11 @@ use resolve_path::PathResolveExt;
 
 use crate::logging::StringResult;
 
-pub trait MapIOError<T> {
+pub trait MapIOErrorExtension<T> {
     fn map_io_err(self, msg: impl AsRef<str> + Debug) -> StringResult<T>;
 }
 
-impl<T> MapIOError<T> for std::io::Result<T> {
+impl<T> MapIOErrorExtension<T> for std::io::Result<T> {
     fn map_io_err(self, msg: impl AsRef<str> + Debug) -> StringResult<T> {
         self.map_err(|io_err| {
             let mut err_msg = String::from("Fatal IO Error! ");
