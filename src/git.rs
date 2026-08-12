@@ -1,220 +1,119 @@
-use std::{fs::read_dir, path::PathBuf, process::Command};
+use std::fmt::Debug;
+use std::path::PathBuf;
+use std::process::Command;
 
-use git2::{Repository, WorktreeAddOptions};
+use git2::Repository;
 
-use crate::logging::{LogFatalOption, LogFatalResult, log_fatal};
+use crate::logging::StringResult;
+use crate::safe_fs::MapIOError;
 
-pub fn clone_repo(code_dir: &PathBuf, host: &str, project: &str, repo: &str) -> Repository {
-    let repo_url = format!("https://{}/{}/{}", host, project, repo);
-    let repo_path = code_dir.join(project).join(repo).join(".bare");
-    if repo_path.exists() {
-        println!("Repo {repo_url} already cloned at {repo_path:?}");
-    } else {
-        println!("Cloning {}", repo_url);
-        let clone_exit_code = Command::new("git")
-            .args([
-                "clone",
-                "--bare",
-                &repo_url,
-                repo_path
-                    .to_str()
-                    .fatal(&format!("Repo path {repo_path:?} was not UTF8")),
-            ])
-            .status()
-            .fatal("cloning repo")
-            .code()
-            .fatal("cloning was terminated");
-        if clone_exit_code == 0 {
-            println!("Successfully cloned {repo_url} into {repo_path:?}");
-        } else {
-            log_fatal(&format!("cloning. Got exit code: {clone_exit_code}"));
+trait MapGitError<T> {
+    fn map_git_err(self, msg: impl AsRef<str> + Debug) -> StringResult<T>;
+}
+
+impl<T> MapGitError<T> for Result<T, git2::Error> {
+    fn map_git_err(self, msg: impl AsRef<str> + Debug) -> StringResult<T> {
+        self.map_err(|git_err| {
+            let mut err_msg = String::from("Fatal Git Error! ");
+            err_msg.push_str(msg.as_ref());
+            err_msg.push_str(&format!(
+                "\n  Cause: {:?}::{:?} {}",
+                git_err.class(),
+                git_err.code(),
+                git_err.message()
+            ));
+            err_msg
+        })
+    }
+}
+
+struct BareRepo {
+    code_dir: PathBuf,
+    host: String,
+    project_name: String,
+    repo_name: String,
+    repo_path: PathBuf,
+}
+
+impl BareRepo {
+    fn new(code_dir: PathBuf, host: String, project_name: String, repo_name: String) -> Self {
+        Self {
+            code_dir: code_dir.clone(),
+            host: host.clone(),
+            project_name: project_name.clone(),
+            repo_name: repo_name.clone(),
+            repo_path: code_dir.join(project_name).join(repo_name).join(".bare"),
         }
     }
-    let repository = Repository::open_bare(repo_path)
-        .fatal_err(|err| format!("opening bare repo: {}", err.code()));
-    let default_branch = must_get_default_branch(&repository);
-    clone_branch(
-        &code_dir,
-        &host,
-        Some(project.into()),
-        Some(repo.into()),
-        Some(default_branch),
-    );
-    repository
+
+    fn clone(&self) -> StringResult<ClonedBareRepo> {
+        let repo_already_exists = self.repo_path.exists();
+        if !repo_already_exists {
+            let repo_url = format!(
+                "https://{}/{}/{}",
+                self.host, self.project_name, self.repo_name
+            );
+            let repo_path_str = self
+                .repo_path
+                .to_str()
+                .ok_or_else(|| format!("Repo path {:?} was not valid UTF8", self.repo_path))?;
+            println!("Cloning {repo_url} into {repo_path_str}");
+            let clone_exit_code = Command::new("git")
+                .args(["clone", "--bare", &repo_url, &repo_path_str])
+                .status()
+                .map_io_err("Could not clone repo")?
+                .code()
+                .ok_or("Cloning was terminated")?;
+            if clone_exit_code == 0 {
+                println!("Successfully cloned {repo_url} into {repo_path_str}");
+            } else {
+                return Err(format!(
+                    "Could not clone {repo_url}. Got exit code: {clone_exit_code}"
+                ));
+            }
+        }
+        let repository = Repository::open_bare(&self.repo_path)
+            .map_git_err(format!("Could not open {:?} as bare repo.", self.repo_path))?;
+        if repo_already_exists {
+            println!("Repo already present at {:?}", self.repo_path);
+        }
+
+        Ok(ClonedBareRepo {
+            code_dir: self.code_dir.clone(),
+            host: self.host.clone(),
+            project_name: self.project_name.clone(),
+            repo_name: self.repo_name.clone(),
+            repo_path: self.repo_path.clone(),
+            repository,
+        })
+    }
+}
+
+struct ClonedBareRepo {
+    code_dir: PathBuf,
+    host: String,
+    project_name: String,
+    repo_name: String,
+    repo_path: PathBuf,
+    repository: Repository,
+}
+
+pub fn clone_repo(
+    code_dir: PathBuf,
+    host: &str,
+    project_name: &str,
+    repo_name: &str,
+) -> StringResult {
+    BareRepo::new(code_dir, host.into(), project_name.into(), repo_name.into()).clone()?;
+    Ok(())
 }
 
 pub fn clone_branch(
-    code_dir: &PathBuf,
+    code_dir: PathBuf,
     host: &str,
     project: Option<String>,
     repo: Option<String>,
     branch: Option<String>,
-) {
-    let resolved_project = match project {
-        Some(project_name) => {
-            println!("Initial project: {project_name}");
-            project_name
-        }
-        None => {
-            println!("No initial project.");
-            let all_project_dirs: Vec<String> = read_dir(&code_dir)
-                .fatal(&format!("reading code_dir {code_dir:?}"))
-                .filter_map(|entry| {
-                    let dir_entry = entry.fatal("Could not access entry");
-                    let dir_name = dir_entry.file_name();
-                    let dir_type = dir_entry.file_type().fatal("Could not access file_type");
-                    if dir_type.is_dir() && dir_name != ".bare" {
-                        Some(dir_name.into_string().fatal("was not UTF8"))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            all_project_dirs
-                .first()
-                .fatal("Must be at least one project")
-                .clone()
-        }
-    };
-    println!("Resolved project: {resolved_project:?}");
-    let resolved_repo = match repo {
-        Some(repo_name) => {
-            println!("Iniital repo name: {repo_name}");
-            repo_name
-        }
-        None => {
-            println!("No initial project.");
-            let all_project_dirs = read_dir(&code_dir.join(&resolved_project))
-                .fatal(&format!("reading code_dir {code_dir:?}"))
-                .filter_map(|entry| {
-                    let dir_entry = entry.fatal("Could not access entry");
-                    let dir_name = dir_entry.file_name();
-                    let dir_type = dir_entry.file_type().fatal("Could not access file_type");
-                    if dir_type.is_dir() {
-                        Some(dir_name.into_string().fatal("was not UTF8"))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            all_project_dirs
-                .first()
-                .fatal("Must be at least one repo")
-                .clone()
-        }
-    };
-    let repo_dir = code_dir
-        .join(&resolved_project)
-        .join(&resolved_repo)
-        .join(".bare");
-    println!("Resolved repo: {resolved_repo:?}");
-    let repository = Repository::open_bare(&repo_dir)
-        .fatal_err(|err| format!("opening bare repo: {}", err.message()));
-    let default_branch = must_get_default_branch(&repository);
-    let all_worktree_names = must_get_all_worktree_names(&repository);
-    let available_branches = must_get_all_branches(&repository)
-        .into_iter()
-        .filter(|branch_name| !all_worktree_names.contains(branch_name))
-        .collect::<Vec<_>>();
-    println!("all_worktree_names: {all_worktree_names:?}");
-    println!("available_branches: {available_branches:?}");
-    println!("default_branch: {default_branch}");
-
-    let resolved_branch = match branch {
-        Some(branch) => {
-            if available_branches.contains(&branch) {
-                branch
-            } else {
-                log_fatal(&format!(
-                    "Provided branch {branch} is not an available branch: {available_branches:?}"
-                ))
-            }
-        }
-        None => {
-            println!("No branch selected");
-            if available_branches.contains(&default_branch) {
-                println!("Cloning default branch {default_branch}");
-                default_branch
-            } else {
-                println!("TODO: pick among available_branches: {available_branches:?}");
-                todo!("TODO: pick among available_branches")
-            }
-        }
-    };
-    println!(
-        "Cloning branch: {resolved_branch} into new worktree of {resolved_project}/{resolved_repo}"
-    );
-    let branch_dir = code_dir
-        .join(resolved_project)
-        .join(resolved_repo)
-        .join(&resolved_branch);
-
-    let mut worktree_add_opts = WorktreeAddOptions::new();
-    worktree_add_opts.checkout_existing(true);
-
-    repository
-        .worktree(&resolved_branch, &branch_dir, Some(&worktree_add_opts))
-        .fatal_err(|err| format!("Could not create worktree: {}", err.message()));
-}
-
-pub fn must_get_all_branches(repository: &Repository) -> Vec<String> {
-    repository
-        .branches(None)
-        .fatal("Could not list branches")
-        .into_iter()
-        .map(|branch| {
-            branch
-                .fatal("Could not access branch")
-                .0
-                .name()
-                .fatal("Could not access branch name")
-                .fatal("branch name was not UTF8")
-                .to_owned()
-        })
-        .collect::<Vec<_>>()
-}
-
-pub fn must_get_all_worktree_names(repository: &Repository) -> Vec<String> {
-    repository
-        .worktrees()
-        .fatal("Could not list worktrees")
-        .into_iter()
-        .map(|wt| {
-            wt.fatal("Could not access worktree name")
-                .fatal("worktree name was not UTF8")
-                .to_owned()
-        })
-        .collect::<Vec<_>>()
-}
-
-pub fn must_get_default_branch(repository: &Repository) -> String {
-    let mut remote = repository
-        .find_remote(
-            repository
-                .remotes()
-                .fatal("listing remotes")
-                .into_iter()
-                .map(|remote_name| {
-                    remote_name
-                        .fatal("Could not access remote name")
-                        .fatal("remote name was not UTF8")
-                })
-                .collect::<Vec<_>>()
-                .first()
-                .fatal("Must have a remote"),
-        )
-        .fatal(&format!("Could not find remote"));
-
-    remote
-        .connect(git2::Direction::Fetch)
-        .fatal("Could not connect");
-
-    remote
-        .default_branch()
-        .fatal_err(|err| format!("Could not read default branch: {}", err.message()))
-        .as_str()
-        .fatal("Could not parse Buf to str")
-        .strip_prefix("refs/heads/")
-        .fatal("Default refspec did not start with refs/heads/")
-        .to_owned()
+) -> StringResult {
+    todo!()
 }
