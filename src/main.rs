@@ -25,7 +25,7 @@ fn run_cli() -> StringResult {
                 project,
                 repo,
                 branch,
-            } => handle_clone_branch(code_dir, &cli.host, project, repo, branch),
+            } => handle_clone_branch(code_dir, cli.host, project, repo, branch),
         },
     }
 }

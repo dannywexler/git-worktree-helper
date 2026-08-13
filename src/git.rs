@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 use std::process::Command;
 
-use git2::Repository;
 use git2::string_array::StringArray;
+use git2::{Repository, WorktreeAddOptions};
 
 use crate::logging::StringResult;
 use crate::safe_fs::MapIOErrorExtension;
@@ -104,10 +104,6 @@ impl BareRepo {
         }
         let repository = Repository::open_bare(repo_path_str)
             .map_git_err(format!("Could not open {repo_path_str} as bare repo."))?;
-
-        if repo_already_exists {
-            println!("Repo already present at {repo_path_str}");
-        }
 
         Ok(BareRepo {
             code_dir: code_dir.clone(),
@@ -231,6 +227,44 @@ impl BareRepo {
             ))?
             .to_vec(format!("{:?}", self.repo_path), "worktrees")
     }
+
+    pub fn clone_branch_into_worktree(&self, branch_name: &str) -> StringResult {
+        let new_worktree_path = self
+            .repo_path
+            .parent()
+            .ok_or_else(|| format!("Repository at {:?} must have parent dir", self.repo_path))?
+            .join(branch_name);
+
+        println!("Cloning branch '{branch_name}' into new worktree at {new_worktree_path:?}");
+
+        let all_worktree_names = self.get_all_worktree_names()?;
+        if all_worktree_names.contains(&branch_name.to_owned()) {
+            println!(
+                "Branch '{branch_name}' is already cloned in worktree at {new_worktree_path:?}"
+            );
+            return Ok(());
+        }
+
+        let all_branch_names = self.get_all_branch_names()?;
+        if !all_branch_names.contains(&branch_name.to_owned()) {
+            return Err(format!(
+                "Branch '{branch_name}' cannot be cloned because it is not one of the existing branches: {all_branch_names:?}"
+            ));
+        }
+
+        let mut worktree_add_opts = WorktreeAddOptions::new();
+        worktree_add_opts.checkout_existing(true);
+
+        self.repository
+            .worktree(branch_name, &new_worktree_path, Some(&worktree_add_opts))
+            .map_git_err(format!(
+                "Repository at {:?} could not add new branch {branch_name} into worktree at path {new_worktree_path:?}",
+                self.repo_path
+            ))?;
+
+        println!("Cloned branch '{branch_name}' into new worktree at {new_worktree_path:?}");
+        Ok(())
+    }
 }
 
 pub fn handle_clone_repo(
@@ -263,11 +297,16 @@ pub fn handle_clone_repo(
 }
 
 pub fn handle_clone_branch(
-    _code_dir: PathBuf,
-    _host: &str,
-    _project: Option<String>,
-    _repo: Option<String>,
-    _branch: Option<String>,
+    code_dir: PathBuf,
+    host: String,
+    project: Option<String>,
+    repo: Option<String>,
+    branch: Option<String>,
 ) -> StringResult {
-    todo!()
+    let project_name = project.unwrap();
+    let repo_name = repo.unwrap();
+    let branch_name = branch.unwrap();
+    let bare_repo = BareRepo::try_open_or_clone(code_dir, host, project_name, repo_name)?;
+    bare_repo.clone_branch_into_worktree(&branch_name)?;
+    Ok(())
 }
