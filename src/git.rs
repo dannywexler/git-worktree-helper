@@ -188,7 +188,7 @@ impl BareRepo {
         Ok(default)
     }
 
-    pub fn get_all_branches(&self) -> StringResult<Vec<String>> {
+    pub fn get_all_branch_names(&self) -> StringResult<Vec<String>> {
         let mut all_branches = Vec::new();
         let branch_entries = self.repository.branches(None).map_git_err(format!(
             "Repository at {:?} could not retrieve all branches",
@@ -221,6 +221,16 @@ impl BareRepo {
 
         Ok(all_branches)
     }
+
+    pub fn get_all_worktree_names(&self) -> StringResult<Vec<String>> {
+        self.repository
+            .worktrees()
+            .map_git_err(format!(
+                "Repository at {:?} could not access worktrees",
+                self.repo_path
+            ))?
+            .to_vec(format!("{:?}", self.repo_path), "worktrees")
+    }
 }
 
 pub fn handle_clone_repo(
@@ -233,10 +243,22 @@ pub fn handle_clone_repo(
         BareRepo::try_open_or_clone(code_dir, host.into(), project_name.into(), repo_name.into())?;
     let remote_name = br.get_remote_name()?;
     println!("Got remote name: {remote_name}");
+
     let default_branch = br.get_default_branch_name()?;
     println!("Got default branch name: {default_branch}");
-    let all_branches = br.get_all_branches()?;
-    println!("Got all branches: {all_branches:?}");
+
+    let all_branch_names = br.get_all_branch_names()?;
+    println!(
+        "Got {} branches: {all_branch_names:?}",
+        all_branch_names.len()
+    );
+
+    let all_worktree_names = br.get_all_worktree_names()?;
+    println!(
+        "Got {} worktrees: {all_worktree_names:?}",
+        all_worktree_names.len()
+    );
+
     Ok(())
 }
 
