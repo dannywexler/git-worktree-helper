@@ -154,22 +154,25 @@ impl BareRepo {
 
     pub fn get_default_branch_name(&self) -> StringResult<String> {
         let remote_name = self.get_remote_name()?;
-        let mut connected_remote = self.repository.find_remote(&remote_name).map_git_err(format!(
-            "Repository at {:?} could not access remote named {remote_name}",
-            self.repo_path
-        ))?;
+        let mut connected_remote =
+            self.repository
+                .find_remote(&remote_name)
+                .map_git_err(format!(
+                    "Repository at {:?} could not access remote named {remote_name}",
+                    self.repo_path
+                ))?;
 
         connected_remote
             .connect(git2::Direction::Fetch)
             .map_git_err(format!(
-                "Repository at {:?} could not connect to remote named {remote_name}", self.repo_path
+                "Repository at {:?} could not connect to remote named {remote_name}",
+                self.repo_path
             ))?;
 
-        let default_branch_buf = connected_remote
-            .default_branch()
-            .map_git_err(format!(
-                "Repository at {:?} could not access the default branch name", self.repo_path
-            ))?;
+        let default_branch_buf = connected_remote.default_branch().map_git_err(format!(
+            "Repository at {:?} could not access the default branch name",
+            self.repo_path
+        ))?;
 
         let default_branch_str = default_branch_buf
             .as_str()
@@ -177,9 +180,46 @@ impl BareRepo {
 
         let default = default_branch_str
             .strip_prefix("refs/heads/")
-            .ok_or_else(|| format!("Default branch name {default_branch_str} did not start with refs/heads/"))?
+            .ok_or_else(|| {
+                format!("Default branch name {default_branch_str} did not start with refs/heads/")
+            })?
             .to_owned();
+
         Ok(default)
+    }
+
+    pub fn get_all_branches(&self) -> StringResult<Vec<String>> {
+        let mut all_branches = Vec::new();
+        let branch_entries = self.repository.branches(None).map_git_err(format!(
+            "Repository at {:?} could not retrieve all branches",
+            self.repo_path
+        ))?;
+
+        for branch_entry in branch_entries {
+            let branch_obj = branch_entry
+                .map_git_err(format!(
+                    "Repository at {:?} could not retrieve all branches",
+                    self.repo_path
+                ))?
+                .0;
+
+            let branch_name = branch_obj
+                .name()
+                .map_git_err(format!(
+                    "Repository at {:?} could not access branch",
+                    self.repo_path
+                ))?
+                .ok_or_else(|| {
+                    format!(
+                        "Repository at {:?} had branch name that was not UTF8",
+                        self.repo_path
+                    )
+                })?;
+
+            all_branches.push(branch_name.to_owned());
+        }
+
+        Ok(all_branches)
     }
 }
 
@@ -195,6 +235,8 @@ pub fn handle_clone_repo(
     println!("Got remote name: {remote_name}");
     let default_branch = br.get_default_branch_name()?;
     println!("Got default branch name: {default_branch}");
+    let all_branches = br.get_all_branches()?;
+    println!("Got all branches: {all_branches:?}");
     Ok(())
 }
 
