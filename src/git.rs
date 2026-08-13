@@ -151,6 +151,36 @@ impl BareRepo {
             )),
         }
     }
+
+    pub fn get_default_branch_name(&self) -> StringResult<String> {
+        let remote_name = self.get_remote_name()?;
+        let mut connected_remote = self.repository.find_remote(&remote_name).map_git_err(format!(
+            "Repository at {:?} could not access remote named {remote_name}",
+            self.repo_path
+        ))?;
+
+        connected_remote
+            .connect(git2::Direction::Fetch)
+            .map_git_err(format!(
+                "Repository at {:?} could not connect to remote named {remote_name}", self.repo_path
+            ))?;
+
+        let default_branch_buf = connected_remote
+            .default_branch()
+            .map_git_err(format!(
+                "Repository at {:?} could not access the default branch name", self.repo_path
+            ))?;
+
+        let default_branch_str = default_branch_buf
+            .as_str()
+            .map_git_err(format!("Could not convert default branch name to string"))?;
+
+        let default = default_branch_str
+            .strip_prefix("refs/heads/")
+            .ok_or_else(|| format!("Default branch name {default_branch_str} did not start with refs/heads/"))?
+            .to_owned();
+        Ok(default)
+    }
 }
 
 pub fn handle_clone_repo(
@@ -163,6 +193,8 @@ pub fn handle_clone_repo(
         BareRepo::try_open_or_clone(code_dir, host.into(), project_name.into(), repo_name.into())?;
     let remote_name = br.get_remote_name()?;
     println!("Got remote name: {remote_name}");
+    let default_branch = br.get_default_branch_name()?;
+    println!("Got default branch name: {default_branch}");
     Ok(())
 }
 
