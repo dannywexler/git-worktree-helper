@@ -9,11 +9,19 @@ use crate::logging::StringResult;
 use crate::safe_fs::MapIOErrorExtension;
 
 pub trait StringArrayExtension {
-    fn to_vec<S: AsRef<str> + Debug>(self, repo_path: S, label: S) -> StringResult<Vec<String>>;
+    fn to_vec<S1: AsRef<str> + Debug, S2: AsRef<str> + Debug>(
+        self,
+        repo_path: S1,
+        label: S2,
+    ) -> StringResult<Vec<String>>;
 }
 
 impl StringArrayExtension for StringArray {
-    fn to_vec<S: AsRef<str> + Debug>(self, repo_path: S, label: S) -> StringResult<Vec<String>> {
+    fn to_vec<S1: AsRef<str> + Debug, S2: AsRef<str> + Debug>(
+        self,
+        repo_path: S1,
+        label: S2,
+    ) -> StringResult<Vec<String>> {
         let repo_path_str = repo_path.as_ref();
         let label_str = label.as_ref();
         self.iter()
@@ -66,7 +74,7 @@ struct BareRepo {
 }
 
 impl BareRepo {
-    fn try_clone_or_open(
+    fn try_open_or_clone(
         code_dir: PathBuf,
         host: String,
         project_name: String,
@@ -77,8 +85,8 @@ impl BareRepo {
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| format!("Repo path {:?} was not valid UTF8", repo_path))?;
+        let repo_url = format!("https://{}/{}/{}", host, project_name, repo_name);
         if !repo_already_exists {
-            let repo_url = format!("https://{}/{}/{}", host, project_name, repo_name);
             println!("Cloning {repo_url} into {repo_path_str}");
             let clone_exit_code = Command::new("git")
                 .args(["clone", "--bare", &repo_url, repo_path_str])
@@ -94,10 +102,11 @@ impl BareRepo {
                 ));
             }
         }
-        let repository = Repository::open_bare(&repo_path)
-            .map_git_err(format!("Could not open {:?} as bare repo.", repo_path))?;
+        let repository = Repository::open_bare(repo_path_str)
+            .map_git_err(format!("Could not open {repo_path_str} as bare repo."))?;
+
         if repo_already_exists {
-            println!("Repo already present at {:?}", repo_path);
+            println!("Repo already present at {repo_path_str}");
         }
 
         Ok(BareRepo {
@@ -118,7 +127,7 @@ impl BareRepo {
                 "Could not access remotes for repo at {:?}",
                 self.repo_path
             ))?
-            .to_vec(format!("{:?}", self.repo_path), "remotes".into())?;
+            .to_vec(format!("{:?}", self.repo_path), "remotes")?;
 
         let all_remotes_length = all_remotes.len();
 
@@ -135,10 +144,10 @@ impl BareRepo {
                         self.repo_path
                     )
                 })
-                .map(|first_item| first_item.into()),
+                .map(|first_item| first_item.to_owned()),
             _ => Err(format!(
-                "Repository at {:?} had {all_remotes_length} remotes: {:?}!",
-                self.repo_path, all_remotes,
+                "Repository at {:?} had {all_remotes_length} remotes: {all_remotes:?}!",
+                self.repo_path
             )),
         }
     }
@@ -150,16 +159,19 @@ pub fn handle_clone_repo(
     project_name: &str,
     repo_name: &str,
 ) -> StringResult {
-    BareRepo::try_clone_or_open(code_dir, host.into(), project_name.into(), repo_name.into())?;
+    let br =
+        BareRepo::try_open_or_clone(code_dir, host.into(), project_name.into(), repo_name.into())?;
+    let remote_name = br.get_remote_name()?;
+    println!("Got remote name: {remote_name}");
     Ok(())
 }
 
 pub fn handle_clone_branch(
-    code_dir: PathBuf,
-    host: &str,
-    project: Option<String>,
-    repo: Option<String>,
-    branch: Option<String>,
+    _code_dir: PathBuf,
+    _host: &str,
+    _project: Option<String>,
+    _repo: Option<String>,
+    _branch: Option<String>,
 ) -> StringResult {
     todo!()
 }
